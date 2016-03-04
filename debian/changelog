@@ -1,0 +1,14 @@
+ros-indigo-jaco-graspit-sample (0.1.2-0saucy) saucy; urgency=high
+
+
+
+ -- Jennifer Buehler <jennifer.e.buehler@gmail.com>  Thu, 03 Mar 2016 23:00:00 -0000
+
+ros-indigo-jaco-graspit-sample (0.1.0-0saucy) saucy; urgency=high
+
+  * added jaco_graspit_sample
+  * Contributors: Jennifer Buehler
+
+ -- Jennifer Buehler <jennifer.e.buehler@gmail.com>  Tue, 01 Mar 2016 23:00:00 -0000
+
+
