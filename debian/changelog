@@ -1,0 +1,15 @@
+ros-indigo-grasp-planning-graspit (0.1.2-0trusty) trusty; urgency=high
+
+
+
+ -- Jennifer Buehler <jennifer.e.buehler@gmail.com>  Thu, 03 Mar 2016 23:00:00 -0000
+
+ros-indigo-grasp-planning-graspit (0.1.0-0trusty) trusty; urgency=high
+
+  * now also adds graspit_simulator_standalone
+  * graspit fork is now compiled into libraries here and doesn't need to be installed separately
+  * Contributors: Jennifer Buehler
+
+ -- Jennifer Buehler <jennifer.e.buehler@gmail.com>  Tue, 01 Mar 2016 23:00:00 -0000
+
+
