@@ -1,5 +1,5 @@
-# graspit-pkgs
+# grasp_planning_graspit_ros
 
-Collection of packages related to GraspIt!
+ROS wrapper for GraspIt! planning interface in the package grasp\_planning\_graspit. Also provides ROS services for accessing the interface.
 
-Please also see [the wiki page](https://github.com/JenniferBuehler/graspit-pkgs/wiki) for more details.
+Please refer to [this wiki page](https://github.com/JenniferBuehler/graspit-pkgs/wiki/grasp_planning_graspit_ros) for more information.
