@@ -31,7 +31,6 @@
 #include <unistd.h>
 
 #include <ros/ros.h>
-
 #include <grasp_planning_graspit/GraspItSceneManagerNoGui.h>
 #include <grasp_planning_graspit/LogBinding.h>
 #include <grasp_planning_graspit/EigenGraspPlanner.h>
@@ -169,6 +168,15 @@ int main(int argc, char **argv)
     priv.param<int>("num_repeat_planning", repeatPlanning, 1);
     PRINTMSG("Repeating planning: " << repeatPlanning);
 
+
+    int numKeepResults;
+    priv.param<int>("default_num_keep_results", numKeepResults, 5);
+    PRINTMSG("Using default number of results kept: " << numKeepResults);
+    
+    bool finishWithAutograsp;
+    priv.param<bool>("default_finish_with_autograsp", finishWithAutograsp, false);
+    PRINTMSG("Finish with auto-grasp by default: " << finishWithAutograsp);
+
     bool saveResultFilesInventor;
     priv.param<bool>("save_result_files_inventor", saveResultFilesInventor, true);
     PRINTMSG("Save result files inventor: " << saveResultFilesInventor);
@@ -212,7 +220,7 @@ int main(int argc, char **argv)
     }
 
     PRINTMSG("Now planning...");
-    if (!p->plan(maxPlanningSteps, repeatPlanning))
+    if (!p->plan(maxPlanningSteps, repeatPlanning, numKeepResults, finishWithAutograsp))
     {
         PRINTERROR("Could not plan.");
         return 0;

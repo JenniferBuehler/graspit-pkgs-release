@@ -48,6 +48,9 @@ using GraspIt::EigenGraspPlanner;
 #define DEFAULT_EGPLANNING_TOPIC "graspit_eg_planning"
 #define DEFAULT_MAX_EGPLANNING_STEPS 70000
 #define DEFAULT_NUM_REPEAT_PLANNING 1
+#define DEFAULT_GRASP_MSG_POSITION_FACTOR 0.001
+#define DEFAULT_NUM_KEEP_RESULTS 3
+#define DEFAULT_FINISH_WITH_AUTOGRASP false
 #define DEFAULT_OUTPUT_DIRECTORY ""
 #define DEFAULT_SAVE_RESULT_FILES false
 #define DEFAULT_NEGATE_JOINT_DOFS true
@@ -97,6 +100,12 @@ void GraspItServices::readParams()
     PRINTMSG("Using default max number of planning steps: " << defaultMaxPlanningSteps);
     priv.param<int>("default_num_repeat_planning", defaultNumRepeatPlanning, DEFAULT_NUM_REPEAT_PLANNING);
     PRINTMSG("Using default number of planning repeats: " << defaultNumRepeatPlanning);
+    priv.param<float>("grasp_msg_position_factor", graspMsgPositionFactor, DEFAULT_GRASP_MSG_POSITION_FACTOR);
+    PRINTMSG("Using default factor for position values: " << graspMsgPositionFactor);
+    priv.param<int>("default_num_keep_results", defaultNumKeepResults, DEFAULT_NUM_KEEP_RESULTS);
+    PRINTMSG("Using default number of results kept: " << defaultNumKeepResults);
+    priv.param<bool>("default_finish_with_autograsp", defaultFinishWithAutograsp, DEFAULT_FINISH_WITH_AUTOGRASP);
+    PRINTMSG("Finish with auto-grasp by default: " << defaultFinishWithAutograsp);
     priv.param<bool>("save_result_files_inventor", saveResultFilesInventor, DEFAULT_SAVE_RESULT_FILES);
     PRINTMSG("Save result files inventor: " << saveResultFilesInventor);
     priv.param<bool>("save_result_files_graspit", saveResultFilesGraspit, DEFAULT_SAVE_RESULT_FILES);
@@ -239,36 +248,45 @@ manipulation_msgs::Grasp GraspItServices::getGraspMsg(const EigenGraspResult& eg
     manipulation_msgs::Grasp g;
     g.id = id;
 
-    // pre joint state not supported yet
     sensor_msgs::JointState preJS;
-    // preJS. ...
-
     sensor_msgs::JointState graspJS;
     graspJS.name = robotJointNames;
-    std::vector<double> dofs = egResult.getJointDOFs();
+    preJS.name = robotJointNames;
+    std::vector<double> graspDOFs = egResult.getGraspJointDOFs();
+    std::vector<double> pregraspDOFs = egResult.getPregraspJointDOFs();
 
-    int nJoints = std::min(dofs.size(), robotJointNames.size());
+    int nJoints = std::min(graspDOFs.size(), robotJointNames.size());
 
-    if (dofs.size() != robotJointNames.size())
+    if (graspDOFs.size() != robotJointNames.size())
     {
         PRINTERROR("Number of DOFs for the robot is not equal to number of joint names.");
         PRINTERROR("Therefore will only write the first " << nJoints << " joint values.");
     }
+    if (graspDOFs.size() != pregraspDOFs.size())
+    {
+        PRINTERROR("Inconsistency: the number of joints in grasp should be equal to pre-grasp");
+        pregraspDOFs=graspDOFs; // use the same state, so the rest of the code doesn't crash
+    }
+
     graspJS.position.resize(nJoints, 0);
+    preJS.position.resize(nJoints, 0);
     for (int i = 0; i < nJoints; ++i)
     {
         int mult = 1;
         if (negateJointDOFs) mult = -1;
-        graspJS.position[i] = mult * dofs[i];
+        graspJS.position[i] = mult * graspDOFs[i];
+        preJS.position[i] = mult * pregraspDOFs[i];
     }
-    // not setting header for the moment. Joint positions don't really need a reference
+    // not setting graspJS.header for the moment. Joint positions don't really need a reference
     // frame and we don't care about the timing...
-    // graspJS.header.
 
     EigenTransform oToHand = egResult.getObjectToHandTransform();
     geometry_msgs::PoseStamped graspPose;
     tf::poseEigenToMsg(oToHand, graspPose.pose);
     graspPose.header.frame_id = objectFrame;
+    graspPose.pose.position.x *= graspMsgPositionFactor;
+    graspPose.pose.position.y *= graspMsgPositionFactor;
+    graspPose.pose.position.z *= graspMsgPositionFactor;
 
     g.pre_grasp_posture = preJS;
     g.grasp_posture = graspJS;
@@ -365,7 +383,8 @@ bool GraspItServices::acceptEGPlanning(manipulation_msgs::GraspPlanning::Request
     int maxPlanningSteps = defaultMaxPlanningSteps;
 
     PRINTMSG("Now starting the planning process...");
-    if (!egPlanner->plan(robotName, objectName, objTransform.get(), maxPlanningSteps, defaultNumRepeatPlanning))
+    if (!egPlanner->plan(robotName, objectName, objTransform.get(), maxPlanningSteps,
+            defaultNumRepeatPlanning, defaultNumKeepResults, defaultFinishWithAutograsp))
     {
         PRINTERROR("Could not plan.");
         res.error_code.value = manipulation_msgs::GraspPlanningErrorCode::OTHER_ERROR;
