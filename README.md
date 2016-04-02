@@ -1,5 +1,5 @@
-# grasp\_planning\_graspit\_msgs
+# graspit-pkgs
 
-Collection of messages for grasp planning with graspit. Later to be merged with
-[graspit_simulator/graspit_ros_planning_msgs](https://github.com/ros-interactive-manipulation/graspit_simulator/tree/master/graspit_ros_planning_msgs)
-as soon as a new version is available.
+Collection of packages related to GraspIt!
+
+Please also see [the wiki page](https://github.com/JenniferBuehler/graspit-pkgs/wiki) for more details.
