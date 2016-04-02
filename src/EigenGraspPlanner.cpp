@@ -53,6 +53,8 @@
 
 #include <boost/filesystem.hpp>
 
+#define AUTOGRASP_VELOCITY 0.05
+#define QUICKOPEN_FACTOR 0.01
 
 using GraspIt::EigenGraspPlanner;
 using GraspIt::Log;
@@ -108,6 +110,8 @@ EigenGraspPlanner::~EigenGraspPlanner()
         graspitEgPlanner = NULL;
     }
     graspitEgPlannerMtx.unlock();
+
+    deleteResults();
 
     // if (mEnergyCalculator) delete mEnergyCalculator;
     PRINTMSG("Exit EigenGrasp planner destructor");
@@ -258,6 +262,8 @@ bool EigenGraspPlanner::plan(const std::string& handName, const std::string& obj
                              const EigenTransform * objectPose,
                              const int maxPlanningSteps,
                              const int repeatPlanning,
+                             const int maxResultsPerRepeat,
+                             const bool finishWithAutograsp,
                              const PlannerType& planType)
 {
     if (!getGraspItSceneManager()->isInitialized())
@@ -288,7 +294,7 @@ bool EigenGraspPlanner::plan(const std::string& handName, const std::string& obj
     // getGraspItSceneManager()->saveGraspItWorld("/home/jenny/test/worlds/startWorld.xml",true);
     // getGraspItSceneManager()->saveInventorWorld("/home/jenny/test/worlds/startWorld.iv",true);
 
-    return plan(maxPlanningSteps, repeatPlanning, planType);
+    return plan(maxPlanningSteps, repeatPlanning, maxResultsPerRepeat, finishWithAutograsp, planType);
 }
 
 bool compareGraspPlanningStates(const GraspPlanningState* g1, const GraspPlanningState* g2)
@@ -296,8 +302,19 @@ bool compareGraspPlanningStates(const GraspPlanningState* g1, const GraspPlannin
     return g1->getEnergy() < g2->getEnergy();
 }
 
+void EigenGraspPlanner::deleteResults()
+{
+    for (std::vector<const GraspPlanningState*>::iterator it=results.begin(); it!=results.end(); ++it)
+    {
+        delete *it;
+    }
+    results.clear();
+}
+
 bool EigenGraspPlanner::plan(const int maxPlanningSteps,
                              const int repeatPlanning,
+                             const int maxResultsPerRepeat,
+                             const bool finishWithAutograsp,
                              const PlannerType& planType)
 {
     if (!getGraspItSceneManager()->isInitialized())
@@ -306,14 +323,14 @@ bool EigenGraspPlanner::plan(const int maxPlanningSteps,
         return false;
     }
 
-    results.clear();
+    deleteResults();
 
     // lock the world so that it won't change while we do the planning
     UNIQUE_RECURSIVE_LOCK lock = getUniqueWorldLock();
 
     for (int i = 0; i < repeatPlanning; ++i)
     {
-        PRINTMSG("Initializing planning...");
+        //PRINTMSG("Initializing planning...");
         if (!initPlanner(maxPlanningSteps, planType))
         {
             PRINTERROR("Could not initialize planner.");
@@ -340,7 +357,7 @@ bool EigenGraspPlanner::plan(const int maxPlanningSteps,
             }
         }
 
-        PRINTMSG("Now initiating planning.");
+        PRINTMSG("Initiating planning, trial #"<<i);
 
         scheduleForIdleEventUpdate();
         setPlannerCommand(START);
@@ -361,11 +378,31 @@ bool EigenGraspPlanner::plan(const int maxPlanningSteps,
         // store results
         graspitEgPlannerMtx.lock();
 
-        int numGrasps = graspitEgPlanner->getListSize();
+        int numGrasps = std::min(graspitEgPlanner->getListSize(), maxResultsPerRepeat);
         for (int i = 0; i < numGrasps; ++i)
         {
-            const GraspPlanningState *s = graspitEgPlanner->getGrasp(i);
-            results.push_back(s);
+            const GraspPlanningState *sOrig = graspitEgPlanner->getGrasp(i);
+            GraspPlanningState * sCopy = new GraspPlanningState(sOrig);
+            if (finishWithAutograsp)
+            {
+                if (!sCopy->execute())
+                {
+                    PRINTERROR("Could not execute grasp state for grasp "<<i<<", skipping auto-grasp");
+                    continue;
+                }
+                else
+                {
+                    if (!sCopy->getHand()->autoGrasp(false,AUTOGRASP_VELOCITY,false))
+                    {
+                        PRINTWARN("Could not perform autograsp for grasp "<<i);
+                    }
+                    else
+                    {
+                         sCopy->saveCurrentHandState();
+                    }
+                }
+            }
+            results.push_back(sCopy);
         }
         graspitEgPlannerMtx.unlock();
     }
@@ -382,8 +419,7 @@ bool EigenGraspPlanner::plan(const int maxPlanningSteps,
 
 GraspIt::EigenTransform EigenGraspPlanner::getHandTransform(const GraspPlanningState * s) const
 {
-    const PositionState* handPosition = s->readPosition();
-    EigenTransform handTransform = getEigenTransform(handPosition->getCoreTran());
+    EigenTransform handTransform = getEigenTransform(s->getTotalTran());
     return handTransform;
 }
 
@@ -414,7 +450,7 @@ GraspIt::EigenTransform EigenGraspPlanner::getObjectTransform(const GraspPlannin
     return objectTransform;
 }
 
-void EigenGraspPlanner::getJointDOFs(const GraspPlanningState * s, std::vector<double>& dofs) const
+void EigenGraspPlanner::getGraspJointDOFs(const GraspPlanningState * s, std::vector<double>& dofs) const
 {
     if (!s->getHand())
     {
@@ -422,7 +458,7 @@ void EigenGraspPlanner::getJointDOFs(const GraspPlanningState * s, std::vector<d
         return;
     }
     const PostureState* handPosture = s->readPosture();
-    if (!s->readPosture())
+    if (!handPosture)
     {
         PRINTERROR("Posture is NULL!");
         return;
@@ -433,11 +469,88 @@ void EigenGraspPlanner::getJointDOFs(const GraspPlanningState * s, std::vector<d
     const int numDOF = s->getHand()->getNumDOF();
     double * _dofs = new double[numDOF];
     handPosture->getHandDOF(_dofs);
+    // PRINTMSG("Grasp DOFs: ");
     for (int k = 0; k < numDOF; ++k)
     {
+        PRINTMSG(_dofs[k]);
         dofs.push_back(_dofs[k]);
     }
 }
+
+
+void EigenGraspPlanner::getPregraspJointDOFs(const GraspPlanningState * s, std::vector<double>& dofs) const
+{
+    GraspPlanningState sCopy(s);
+    if (!sCopy.getHand())
+    {
+        PRINTERROR("Hand is NULL!");
+        return;
+    }
+    const int numDOF = sCopy.getHand()->getNumDOF();
+    const PostureState* handPosture = sCopy.readPosture();
+    if (!handPosture)
+    {
+        PRINTERROR("Posture is NULL!");
+        return;
+    }
+    
+    // execute the auto-grasp in "opening" direction
+    if (!sCopy.execute())
+    {
+        PRINTWARN("Could not execute grasp state, the pre-grasp state may not be ideal.");
+    }
+    // opens hand until no collision is detected
+    if (!sCopy.getHand()->quickOpen(QUICKOPEN_FACTOR))
+    {
+        PRINTMSG("INFO - EigenGraspPlanner: quickOpen() returned false. The hand may have been completely opened (quickOpen() is a Graspit! hack with no alternative so far, as auto-grasp requires collision-free state)");
+    }
+
+    // XXX test print:
+    /*double * __dofs = new double[numDOF];
+    sCopy.getHand()->getDOFVals(__dofs);
+    PRINTMSG("After quickopen DOFs: ");
+    for (int k = 0; k < numDOF; ++k)
+    {
+        PRINTMSG(__dofs[k]);
+    }*/
+    // XXX end test print
+
+    // re-close grip until first contact, this should also retreat a tiny bit,
+    // so that there are no more contacts
+    /*if (!sCopy.getHand()->autoGrasp(false,AUTOGRASP_VELOCITY,true))
+    {
+        PRINTWARN("Could not correctly re-close hand with auto-grasp. The resulting pre-grasp state may not be ideal.");
+    }*/
+
+    // opens hand until a collision is detected. This will open the hand either all the way,
+    // or not all the way if collision detected.
+    // Prerequisite: Hand may not be in collision, otherwise this gets interpolation errors and 
+    // returns false
+    if (!sCopy.getHand()->autoGrasp(false,-AUTOGRASP_VELOCITY,true))
+    {
+        PRINTWARN("Could not correctly open hand with auto-grasp, the pre-grasp state may not be ideal.");
+    }
+    // in case a collision stopped the opening of hand, close the grip again
+    // until no collision is detected. 
+    /*if (!sCopy.getHand()->quickOpen(-QUICKOPEN_FACTOR))
+    {
+        PRINTWARN("Could not correctly open hand with auto-grasp, the pre-grasp state may not be ideal.");
+    }*/
+    sCopy.saveCurrentHandState();
+
+    // this gets the DOF values for the 3 fingers. If the hand has only one EigenGrasp which is symmetric,
+    // the 3 values will be the same.
+    double * _dofs = new double[numDOF];
+    handPosture->getHandDOF(_dofs);
+    //PRINTMSG("Pre-grasp DOFs: ");
+    for (int k = 0; k < numDOF; ++k)
+    {
+        //PRINTMSG(_dofs[k]);
+        dofs.push_back(_dofs[k]);
+    }
+}
+
+
 
 void EigenGraspPlanner::getEigenGraspValues(const GraspPlanningState * s, std::vector<double>& egVals) const
 {
@@ -532,7 +645,11 @@ bool EigenGraspPlanner::saveResultsAsWorldFiles(const std::string& inDirectory,
         }
 
         // Execute grasp so that the correct world is saved
-        s->execute();
+        if (!s->execute())
+        {
+            PRINTERROR("Could not execute grasp state for grasp "<<i<<", won't save the result");
+            continue;
+        }
 
         std::stringstream _wFilename;
         _wFilename << inDirectory << "/" << fileNamePrefix << "_" << (i + 1);
@@ -552,48 +669,74 @@ bool EigenGraspPlanner::saveResultsAsWorldFiles(const std::string& inDirectory,
 }
 
 
+
+bool EigenGraspPlanner::copyResult(const GraspPlanningState * s, EigenGraspResult& result) const
+{
+    if (!checkStateValidity(s))
+    {
+        PRINTERROR("Cannot work with this state");
+        return false;
+    }
+
+    EigenTransform handTransform = getHandTransform(s);
+    //PRINTMSG("RESULT "<<i<<" Hand transform: " << handTransform);
+
+    EigenTransform objectTransform = getObjectTransform(s);
+    //PRINTMSG("RESULT "<<i<<" Object transform: " << objectTransform);
+
+    // Compute hand transform relative to object
+    // objectTransform * relTransform = handTransform
+    // relTransform = objectTransform.inverse() * handTransform;
+    EigenTransform relTransform = objectTransform.inverse() * handTransform;
+    
+    //PRINTMSG("RESULT "<<i<<" rel transform: " << relTransform);
+
+    // PRINTMSG("Relative transform: " << relTransform);
+
+    // PRINTMSG("-- getting (pre)grasp DOFs --");
+    std::vector<double> graspDOFs;
+    getGraspJointDOFs(s, graspDOFs);
+    /*     int k=0;
+         for (std::vector<double>::const_iterator it=graspDOFs.begin(); it!=graspDOFs.end(); ++it){
+             PRINTMSG("Grasp hand DOF "<<k<<": "<<*it);
+             ++k;
+         }
+    */
+    std::vector<double> pregraspDOFs;
+    getPregraspJointDOFs(s, pregraspDOFs);
+    /*     int k=0;
+         for (std::vector<double>::const_iterator it=pregraspDOFs.begin(); it!=pregraspDOFs.end(); ++it){
+             PRINTMSG("Grasp hand DOF "<<k<<": "<<*it);
+             ++k;
+         }
+    */
+    std::vector<double> egVals;
+    getEigenGraspValues(s, egVals);
+    /*      for (std::vector<double>::const_iterator it=egVals.begin(); it!=egVals.end(); ++it){
+              PRINTMSG("EigenGrasp value "<<k<<": "<<*it);
+              ++k;
+          }*/
+    result = EigenGraspResult(relTransform, graspDOFs, pregraspDOFs, egVals,
+                s->isLegal(), s->getEpsilonQuality(), s->getVolume(), s->getEnergy());
+    return true;
+}
+
+
+
+
 void EigenGraspPlanner::getResults(std::vector<EigenGraspResult>& allGrasps) const
 {
     int numGrasps = results.size();
-
     for (int i = 0; i < numGrasps; ++i)
     {
         const GraspPlanningState * s = results[i];
-
-        if (!checkStateValidity(s))
+        EigenGraspResult res;
+        if (!copyResult(s,res))
         {
             PRINTERROR("Cannot work with this state");
             continue;
         }
-
-        EigenTransform handTransform = getHandTransform(s);
-        // PRINTMSG("Hand transform: " << handTransform);
-
-        EigenTransform objectTransform = getObjectTransform(s);
-        // PRINTMSG("Object transform: " << objectTransform);
-
-        // Compute hand transform relative to object
-        // objectTransform * relTransform = handTransform
-        // relTransform = objectTransform.inverse() * handTransform;
-        EigenTransform relTransform = objectTransform.inverse() * handTransform;
-
-        // PRINTMSG("Relative transform: " << relTransform);
-        std::vector<double> dofs;
-        getJointDOFs(s, dofs);
-        /*     int k=0;
-             for (std::vector<double>::const_iterator it=dofs.begin(); it!=dofs.end(); ++it){
-                 PRINTMSG("Hand DOF "<<k<<": "<<*it);
-                 ++k;
-             }
-        */
-        std::vector<double> egVals;
-        getEigenGraspValues(s, egVals);
-        /*      for (std::vector<double>::const_iterator it=egVals.begin(); it!=egVals.end(); ++it){
-                  PRINTMSG("EigenGrasp value "<<k<<": "<<*it);
-                  ++k;
-              }*/
-        allGrasps.push_back(EigenGraspResult(relTransform, dofs, egVals,
-                                             s->isLegal(), s->getEpsilonQuality(), s->getVolume(), s->getEnergy()));
+        allGrasps.push_back(res);
     }
 }
 
@@ -881,7 +1024,8 @@ void EigenGraspPlanner::plannerUpdate()
 
 void EigenGraspPlanner::plannerComplete()
 {
-    printPlanningResults();
+    //printPlanningResults();
+    PRINTMSG("=== EigenGraspPlanner complete ===");
 }
 
 void EigenGraspPlanner::updateResults()
