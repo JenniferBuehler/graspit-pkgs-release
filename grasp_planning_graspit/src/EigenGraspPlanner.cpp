@@ -36,14 +36,14 @@
 #include <eigenGrasp.h>
 #include <EGPlanner/search.h>
 #include <EGPlanner/searchState.h>
-#include <EGPlanner/searchEnergy.h>
+#include <EGPlanner/energy/searchEnergy.h>
 #include <EGPlanner/egPlanner.h>
 #include <EGPlanner/simAnn.h>
 #include <EGPlanner/simAnnPlanner.h>
 // #include <timeTest.h>
 // #include <guidedPlanner.h>
 // #include <loopPlanner.h>
-#include <ivmgr_nogui.h>
+#include <ivmgrHeadless.h>
 
 #include <QWidget>
 #include <Inventor/Qt/SoQt.h>
@@ -472,7 +472,7 @@ void EigenGraspPlanner::getGraspJointDOFs(const GraspPlanningState * s, std::vec
     // PRINTMSG("Grasp DOFs: ");
     for (int k = 0; k < numDOF; ++k)
     {
-        PRINTMSG(_dofs[k]);
+        // PRINTMSG(_dofs[k]);
         dofs.push_back(_dofs[k]);
     }
 }
