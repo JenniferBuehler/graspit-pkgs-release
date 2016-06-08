@@ -22,8 +22,8 @@
 
 #include <string>
 #include <vector>
+#include <urdf2graspit/Types.h>
 #include <urdf2graspit/DHParam.h>
-
 #include <ros/ros.h>
 
 
@@ -38,10 +38,7 @@ namespace urdf2graspit
 {
 namespace xmlfuncs
 {
-
-// smart pointer type for joints
-typedef boost::shared_ptr<urdf::Joint> JointPtr;
-
+    
 /**
  * \brief A chain of links joined by joints, described in DH parameters.
  * \author Jennifer Buehler
@@ -49,6 +46,7 @@ typedef boost::shared_ptr<urdf::Joint> JointPtr;
  */
 class FingerChain
 {
+
 public:
     FingerChain(std::vector<DHParam>& p, std::vector<std::string>& lf, std::vector<std::string>& lt):
         prms(p), linkFileNames(lf), linkTypes(lt) {}
@@ -66,7 +64,7 @@ public:
     friend std::ostream& operator<<(std::ostream& o, const FingerChain& p);
 };
 
-extern std::string getLinkDescXML(const boost::shared_ptr<urdf::Link>& link,
+extern std::string getLinkDescXML(const LinkPtr& link,
                                   const std::string& mesh_output_extension,
                                   const std::string& material = "plastic");
 
