@@ -20,6 +20,7 @@
 
 #include <urdf2inventor/Helpers.h>
 #include <urdf2graspit/Urdf2Graspit.h>
+#include <urdf2graspit/ContactsGenerator.h>
 #include <urdf2graspit/FileIO.h>
 #include <string>
 #include <vector>
@@ -59,17 +60,13 @@ int main(int argc, char** argv)
     }
 
     std::string outputMaterial = "plastic";
-    priv.param<std::string>("output_material", outputMaterial, outputMaterial);
-    ROS_INFO("output_material: <%s>", outputMaterial.c_str());
-
     double scaleFactor = 1000;
     priv.param<double>("scale_factor", scaleFactor, scaleFactor);
     ROS_INFO("scale_factor: <%f>", scaleFactor);
     
-    bool negateJointMoves = false;
+    bool negateJointMoves=false;
     priv.param<bool>("negate_joint_movement", negateJointMoves, negateJointMoves);
     ROS_INFO("negate_joint_movement: <%d>", negateJointMoves);
-
 
     // An axis and angle (degrees) can be specified which will transform *all*
     // visuals (not links, but their visuals!) within their local coordinate system.
@@ -86,26 +83,63 @@ int main(int argc, char** argv)
     priv.param<float>("visual_corr_axis_angle", visCorrAxAngle, visCorrAxAngle);
     urdf2graspit::Urdf2GraspIt::EigenTransform addVisualTrans(Eigen::AngleAxisd(visCorrAxAngle*M_PI/180, Eigen::Vector3d(visCorrAxX,visCorrAxY,visCorrAxZ)));
 
-    urdf2inventor::Urdf2Inventor::UrdfTraverserPtr traverser(new urdf_traverser::UrdfTraverser());
-    urdf2graspit::Urdf2GraspIt converter(traverser, scaleFactor, negateJointMoves);
+    std::string useFilename;
+    priv.param<std::string>("filename", useFilename, useFilename);
 
-    ROS_INFO("Starting model conversion...");
-
-    urdf2graspit::Urdf2GraspIt::ConversionResultPtr cResult =
-        converter.processAll(urdf_filename,
-                             palmLinkName,
-                             roots, outputMaterial, addVisualTrans);
-    if (!cResult || !cResult->success)
+    ROS_INFO("### Getting DH parameters...");
+    
+    urdf2inventor::Urdf2Inventor::UrdfTraverserPtr traverser_conv(new urdf_traverser::UrdfTraverser());
+    urdf2graspit::Urdf2GraspIt converter(traverser_conv, scaleFactor,negateJointMoves, false);
+    
+    if (!converter.loadModelFromFile(urdf_filename))
     {
-        ROS_ERROR("Failed to process.");
+        ROS_ERROR("Could not load the model into the contacts generator");
         return 0;
     }
 
-    ROS_INFO("Conversion done.");
+    if (!converter.prepareModelForDenavitHartenberg(palmLinkName))
+    {
+        ROS_ERROR("Could not prepare model for DH parameters");
+        return 0;
+    }
+    std::vector<urdf2graspit::DHParam> dh_parameters;
+    if (!converter.getDHParams(dh_parameters, palmLinkName))
+    {
+        ROS_ERROR("Could not retrieve DH parameters from model");
+        return 0;
+    }
 
-    urdf2graspit::FileIO fileIO(outputDir, converter.getOutStructure());
+    ROS_INFO("### Generating contacts ");
+    urdf2inventor::Urdf2Inventor::UrdfTraverserPtr traverser_cont(new urdf_traverser::UrdfTraverser());
+    urdf2graspit::ContactsGenerator contGen(traverser_cont, scaleFactor);
+    if (!contGen.loadModelFromFile(urdf_filename))
+    {
+        ROS_ERROR("Could not load the model into the contacts generator");
+        return 0;
+    }
+    float coefficient = 0.2;
+    bool addAxes = true;
+    bool urdfAxes = true;
+    float axRad=0.0015;
+    float axLen=0.015;
+    if (!contGen.generateContactsWithViewer(roots,
+        palmLinkName, coefficient, dh_parameters, addAxes,
+        urdfAxes, axRad, axLen, addVisualTrans))
+    {
+        ROS_ERROR("Could not generate contacts");
+        return 0;
+    }
+    std::string contacts = contGen.getContactsFileContent(traverser_cont->getModelName());
+    ROS_INFO_STREAM("Contacts generated."); // <<": "<<contacts);
 
-    if (!fileIO.write(cResult))
+    urdf2graspit::FileIO fileIO(outputDir, contGen.getOutStructure());
+    if (!fileIO.initOutputDir(traverser_cont->getModelName()))
+    {
+        ROS_ERROR_STREAM("Could not initialize output directory "
+            <<outputDir<<" for robot "<<traverser_cont->getModelName());
+        return 0;
+    }
+    if (!fileIO.writeContacts(traverser_cont->getModelName(), contacts, useFilename))
     {
         ROS_ERROR("Could not write files");
         return 0;
@@ -113,6 +147,7 @@ int main(int argc, char** argv)
     
     ROS_INFO("Cleaning up...");
     converter.cleanup();
+    contGen.cleanup();
 
     ROS_INFO("Done.");
     return 0;
