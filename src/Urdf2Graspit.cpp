@@ -74,7 +74,7 @@ bool Urdf2GraspIt::getXML(const std::vector<DHParam>& dhparams,
 
     str << "<?xml version=\"1.0\" ?>" << std::endl;
     str << "<robot type=\"Hand\">" << std::endl;
-    str << "<palm>" << palmLinkName << ".xml</palm>" << std::endl;
+    str << "\t<palm>" << palmLinkName << ".xml</palm>" << std::endl;
 
     float def_kp = 1e+9;
     float def_kd = 1e+7;
@@ -84,7 +84,7 @@ bool Urdf2GraspIt::getXML(const std::vector<DHParam>& dhparams,
         // ROS_INFO_STREAM("PRM Joint: "<<*it);
         float minValue, maxValue;
         getLimits(*(it->joint), minValue, maxValue);
-        float draggerScale = fabs(maxValue - minValue);
+        float draggerScale = 20; // fabs(maxValue - minValue);
         float velocity, effort;
         getJointMoves(*(it->joint), velocity, effort);
         str << urdf2graspit::xmlfuncs::getDOF(velocity, effort, def_kp, def_kd, draggerScale, "r") << std::endl;
@@ -158,8 +158,8 @@ bool Urdf2GraspIt::getXML(const std::vector<DHParam>& dhparams,
         str << chainStr;
     }
 
-    if (eigenXML) str << "<eigenGrasps>" << *eigenXML << "</eigenGrasps>" << std::endl;
-    if (contactsVGR) str << "<virtualContacts>" << *contactsVGR << "</virtualContacts>" << std::endl;
+    if (eigenXML) str << "\t<eigenGrasps>" << *eigenXML << "</eigenGrasps>" << std::endl;
+    if (contactsVGR) str << "\t<virtualContacts>" << *contactsVGR << "</virtualContacts>" << std::endl;
 
     str << "</robot>" << std::endl;
 
@@ -703,6 +703,17 @@ void Urdf2GraspIt::getLimits(const urdf::Joint& j, float& min, float& max)
     {
         min = -min;
         max = -max;
+    }
+    bool revolute = j.type == urdf::Joint::REVOLUTE;
+    if (revolute)
+    {
+        min *= RAD_TO_DEG;
+        max *= RAD_TO_DEG;
+    }
+    else
+    {   // convert from meter units to mm
+        min *= 1000;
+        max *= 1000;
     }
 }
 
