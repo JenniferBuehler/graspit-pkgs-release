@@ -34,19 +34,15 @@
 #include <robot.h>
 #include <body.h>
 #include <grasp.h>
-#include <ivmgrHeadless.h>
+#include <graspitCore.h>
 
 #include <Inventor/Qt/SoQt.h>
 #include <Inventor/actions/SoWriteAction.h>
-#include <Inventor/actions/SoGetBoundingBoxAction.h>
-#include <Inventor/sensors/SoIdleSensor.h>
+// #include <Inventor/actions/SoGetBoundingBoxAction.h>
 
 #include <boost/filesystem.hpp>
 
 using GraspIt::GraspItSceneManager;
-using GraspIt::Log;
-
-
 
 bool fileExists(const std::string& filename)
 {
@@ -85,7 +81,7 @@ bool makeDirectoryIfNeeded(const std::string& dPath)
 
 GraspItSceneManager::GraspItSceneManager():
     graspitWorld(NULL),
-    ivMgr(NULL),
+    core(NULL),
     initialized(false),
     fakeQObjectParent(NULL)
 {
@@ -96,7 +92,7 @@ GraspItSceneManager::~GraspItSceneManager()
 {
     PRINTMSG("GraspItSceneManager destructor");
 
-    if (ivMgr)
+    if (core)
     {
         PRINTERROR("The IVmgr should have been deleted, either by calling shutdown(), or by subclasses destructor!");
         throw std::string("The IVmgr should have been deleted, either by calling shutdown(), or by subclasses destructor!");
@@ -117,16 +113,16 @@ void GraspItSceneManager::initialize()
         return;
     }
 
-    initializeIVmgr();
-    if (!ivMgr)
+    initializeCore();
+    if (!core)
     {
-        throw std::string("Cannot initialize world without ivMgr begin intialized");
+        throw std::string("Cannot initialize world without core begin intialized");
     }
 
     fakeQObjectParent = new QObject();
 
     UNIQUE_RECURSIVE_LOCK lock(graspitWorldMtx);
-    graspitWorld = createGraspitWorld();
+    graspitWorld = createNewGraspitWorld();
     if (!graspitWorld)
     {
         PRINTERROR("Graspit world was initialized to NULL");
@@ -160,10 +156,10 @@ void GraspItSceneManager::shutdown()
     }
     registeredAccessorsMtx.unlock();
 
-    // destroy ivMgr
-    destroyIVmgr();
+    // destroy core
+    destroyCore();
 
-    if (ivMgr)
+    if (core)
     {
         PRINTERROR("The IVmgr should have been deleted, either by calling shutdown(), or by subclasses destructor!");
         throw std::string("The IVmgr should have been deleted, either by calling shutdown(), or by subclasses destructor!");
@@ -233,6 +229,17 @@ void GraspItSceneManager::processIdleEvent()
 
 
 
+/*
+Old method to get camera parameters. Is now done in new GraspitCore class.
+
+ **
+ * Computes camera parameters to set for watching the current scene.
+ * This is needed for writing a world file with meaningful camera parameters.
+ *
+ * Will set the camera at twice the scene's diameter (diameter of whole bounding box) distance
+ * away from the scene center along the x axis. It look at the scene along the x axis.
+ * The focal distance is also the distance from the camera to the scene center to keep things simple.
+ *
 void GraspItSceneManager::getCameraParameters(Eigen::Vector3d & camPos, Eigen::Quaterniond& camQuat, double & fd) const
 {
     if (!isInitialized())
@@ -267,7 +274,7 @@ void GraspItSceneManager::getCameraParameters(Eigen::Vector3d & camPos, Eigen::Q
     camQuat = Eigen::Quaterniond::FromTwoVectors(Eigen::Vector3d(0, 0, 1), Eigen::Vector3d(-1, 0, 0));
     fd = diamLen;
 }
-
+*/
 
 bool GraspItSceneManager::saveGraspItWorld(const std::string& filename, bool createDir)
 {
@@ -291,17 +298,16 @@ bool GraspItSceneManager::saveGraspItWorld(const std::string& filename, bool cre
         return false;
     }
 
+/* Old code using obsolete getCameraParameters(). This is now done in GraspitCore.
     // set the camera so that the world file can be written with some correct camera parameters
     // if no camera parameters are set, the world file can't be opened with the original simulatur GUI.
     Eigen::Vector3d camPos;
     Eigen::Quaterniond camQuat;
     double fd;
     getCameraParameters(camPos, camQuat, fd);
-
-    // XXX this is not really threadsafe? Though ivMgr is only accessed in constructor
-    // and destructor (exitPlanner()) otherwise...
-    ivMgr->setCamera(camPos.x(), camPos.y(), camPos.z(),
-                     camQuat.x(), camQuat.y(), camQuat.z(), camQuat.w(), fd);
+    // core->setCamera(camPos.x(), camPos.y(), camPos.z(),
+    //                camQuat.x(), camQuat.y(), camQuat.z(), camQuat.w(), fd);
+*/
 
     if (graspitWorld->save(filename.c_str()) == FAILURE)
     {
@@ -343,6 +349,161 @@ bool GraspItSceneManager::saveInventorWorld(const std::string& filename, bool cr
     write.getOutput()->closeFile();
     return true;
 }
+
+
+
+bool GraspItSceneManager::saveRobotAsInventor(const std::string& filename, const std::string& robotName,
+                                   const bool createDir, const bool forceWrite)
+{
+    if (!forceWrite && fileExists(filename))
+    {
+        PRINTERROR("File " << filename << " already exists");
+        return false;
+    }
+    if (!isInitialized())
+    {
+        PRINTERROR("Not initialized");
+        return false;
+    }
+    UNIQUE_RECURSIVE_LOCK(graspitWorldMtx);
+    if (!graspitWorld)
+    {
+        PRINTERROR("Cannot load " << filename << " with no initialized graspitWorld");
+        return false;
+    }
+
+    // Check that no object with same name exists
+    Robot * existingRobot = getRobotNoCheck(robotName);
+    if (!existingRobot)
+    {
+        PRINTERROR("Robot with name " << robotName << " does not exist in world.");
+        return false;
+    }
+
+    try
+    {
+        if (createDir && !makeDirectoryIfNeeded(getFileDirectory(filename)))
+        {
+            PRINTERROR("Could not create directory for file " << filename);
+            return false;
+        }
+    }
+    catch (int e)
+    {
+        PRINTERROR("An exception ocurred when trying to create the directory. Exception number " << e);
+        return false;
+    }
+
+    SoOutput out;
+    if (!out.openFile(filename.c_str())) return false;
+    out.setBinary(false);
+    SoWriteAction write(&out);
+    write.apply(existingRobot->getIVRoot());
+    write.getOutput()->closeFile();
+
+    PRINTMSG("Saved robot IV to " << filename);
+    return true;
+}
+
+
+bool GraspItSceneManager::saveObjectAsInventor(const std::string& filename, const std::string& name,
+                                    const bool createDir, const bool forceWrite)
+{
+    if (name.empty())
+    {
+        PRINTERROR("Cannot save an object without a name");
+        return false;
+    }
+
+    if (!forceWrite && fileExists(filename))
+    {
+        PRINTERROR("File " << filename << " already exists");
+        return false;
+    }
+    if (!isInitialized())
+    {
+        PRINTERROR("Not initialized");
+        return false;
+    }
+
+    UNIQUE_RECURSIVE_LOCK(graspitWorldMtx);
+    if (!graspitWorld)
+    {
+        PRINTERROR("Cannot load " << filename << " with no initialized graspitWorld");
+        return false;
+    }
+
+    // Check that no object with same name exists
+    Body * existingBody = getBodyNoCheck(name);
+
+    if (!existingBody)
+    {
+        PRINTERROR("Body with name " << name << " is not loaded in world.");
+        return false;
+    }
+
+    try
+    {
+        if (createDir && !makeDirectoryIfNeeded(getFileDirectory(filename)))
+        {
+            PRINTERROR("Could not create directory for file " << filename);
+            return false;
+        }
+    }
+    catch (int e)
+    {
+        PRINTERROR("An exception ocurred when trying to create the directory. Exception number " << e);
+        return false;
+    }
+
+    SoOutput out;
+    if (!out.openFile(filename.c_str())) return false;
+    out.setBinary(false);
+    SoWriteAction write(&out);
+    write.apply(existingBody->getIVRoot());
+    write.getOutput()->closeFile();
+
+    PRINTMSG("Saved object IV to " << filename);
+    return true;
+}
+
+
+std::vector<std::string> GraspItSceneManager::getRobotNames() const
+{
+    std::vector<std::string> names;
+    UNIQUE_RECURSIVE_LOCK(graspitWorldMtx);
+    int numR =  graspitWorld->getNumRobots();
+    for (int i = 0; i < numR; ++i)
+    {
+        const Robot * r = graspitWorld->getRobot(i);
+        names.push_back(r->getName().toStdString());
+    }
+    return names; 
+}
+
+std::vector<std::string> GraspItSceneManager::getObjectNames(bool graspable) const
+{
+    std::vector<std::string> names;
+    UNIQUE_RECURSIVE_LOCK(graspitWorldMtx);
+
+    int numB =  graspable ? graspitWorld->getNumGB() : graspitWorld->getNumBodies();
+    for (int i = 0; i < numB; ++i)
+    {
+        if (graspable)
+        {
+            GraspableBody * b = graspitWorld->getGB(i);
+            names.push_back(b->getName().toStdString());
+        } 
+        else
+        {
+            Body * b = graspitWorld->getBody(i);
+            names.push_back(b->getName().toStdString());
+        }
+    }
+    return names; 
+}
+
+
 
 
 int GraspItSceneManager::loadWorld(const std::string& filename)
@@ -1092,8 +1253,6 @@ int GraspItSceneManager::setGraspableObject(const std::string& robotName, const 
     hand->getGrasp()->setObjectNoUpdate(gObject);
     return 0;
 }
-
-
 
 
 GraspableBody * GraspItSceneManager::getCurrentGraspableBody()
