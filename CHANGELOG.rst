@@ -2,6 +2,22 @@
 Changelog for package urdf2graspit
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+1.1.1 (2016-08-07)
+------------------
+* Fix cylinder and box orientations
+* Contact generation bug fixed
+* Corrected urdf2graspit contact generation to place cylinder at right spot in Baxter
+* Contributors: Jennifer Buehler
+
+1.1.0 (2016-07-26)
+------------------
+* minor fix in generating eigen.xml
+* Indented xml
+* Jenkins fix
+* Updated command line parsing in grasp_planning.cpp and adjusted some parameters for prismatic joints in urdf2graspit
+* Fix minor print bug for fixing joints
+* Contributors: Jennifer Buehler
+
 1.0.0 (2016-06-08)
 ------------------
 * Removed direct Qt dependencies from urdf2graspit, as this is now in urdf2inventor
