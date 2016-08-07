@@ -37,7 +37,7 @@ class GraspableBody;
 class Hand;
 class EGPlanner;
 class World;
-class IVmgrBase;
+class GraspitCore;
 class SoSensor;
 class transf;
 class Robot;
@@ -74,7 +74,7 @@ class GraspItAccessor;
  * world is enough for the implementation. To keep things modular, this class should only be re-implemented in
  * subclasses if access via GraspItAccessor is not sufficient.
  * GraspItSceneManager basically only should handle the main scene manager loop and manage the world,
- * similar to how IVmgr in the original GraspIt! source does.
+ * similar to how GraspitCore in the original GraspIt! source does.
  *
  * Before a GraspItSceneManager instance can be used, it has to be initialized by calling initialize().
  * It is expected that subclasses constructors call this method, but there is no harm in calling it several times.
@@ -113,7 +113,7 @@ public:
      *
      * It is always safe for the user to call this function in any case as a
      * precaution. There is no harm in calling it several times.
-     * *Info:* This method calls the protected virtual initializeIVmgr().
+     * *Info:* This method calls the protected virtual initializeCore().
      */
     void initialize();
 
@@ -131,7 +131,7 @@ public:
      *
      * It is always safe for the user to call this function in any case as a
      * precaution. There is no harm in calling it several times.
-     * *Info:* This method calls the protected virtual destroyIVmgr().
+     * *Info:* This method calls the protected virtual destroyCore().
      */
     void shutdown();
 
@@ -151,6 +151,10 @@ public:
      * Waits until isReady() returns true
      */
     virtual void waitUntilReady() const = 0;
+
+    std::vector<std::string> getObjectNames(bool graspable) const;
+    std::vector<std::string> getRobotNames() const;
+
 
     /**
      * Loads graspitWorld from an XML file.
@@ -297,6 +301,18 @@ public:
     bool saveInventorWorld(const std::string& filename, bool createDir = false);
 
     /**
+     * Saves the robot as inventor file, if it was loaded in the world before.
+     */
+    bool saveRobotAsInventor(const std::string& filename, const std::string& robotName,
+                                   const bool createDir=false, const bool forceWrite=false);
+
+    /**
+     * Saves the object as inventor file, if it was loaded in the world before.
+     */
+    bool saveObjectAsInventor(const std::string& filename, const std::string& name,
+                              const bool createDir=false, const bool forceWrite=false);
+
+    /**
      * returns true if a robot with this name is currently loaded in the world
      */
     bool isRobotLoaded(const std::string& name) const;
@@ -307,30 +323,29 @@ public:
 
 protected:
     /**
-     * This method is supposed to initialize the IVmgr instance (field ivMgr).
+     * This method is supposed to initialize the Core instance (field core).
      * If any other threads are started by this function which
      * need to complete initialization routines, this method has to block until all initialization
-     * is finished and the IVmgr instance is fully initialized.
+     * is finished and the Core instance is fully initialized.
      * This method is expected to also create a scene manager event loop thread which regularly
      * should call processIdleEvent() (each time after scheduleIdleEvent() has been called).
      */
-    virtual void initializeIVmgr() = 0;
+    virtual void initializeCore() = 0;
 
     /**
      * Stops the scene manager thread, the event loop,
      *  and everything which needs to be destroyed/shut down
-     * (basically reverting what was initialized in initializeIVmgr()).
-     * Also is expected to destroy the ivMgr object and sets it to NULL.
+     * (basically reverting what was initialized in initializeCore()).
+     * Also is expected to destroy the core object and sets it to NULL.
      */
-    virtual void destroyIVmgr() = 0;
+    virtual void destroyCore() = 0;
 
     /**
-     * Creates the graspit world object. In case the world needs special initializing, the
-     * implementation is left to the subclasses. The IVmgr (field ivMgr) should be used
-     * to create a new world.
-     * \return pointer to the World object maintained by IVmgr (field ivMgr).
+     * Creates a new graspit world object. In case the world needs special initializing, the
+     * implementation is left to the subclasses.
+     * \return pointer to the new world object which is now maintained by GraspitCore.
      */
-    virtual World * createGraspitWorld() = 0;
+    virtual World * createNewGraspitWorld() = 0;
 
     /**
      * Subclasses which support Qt and which use the
@@ -611,19 +626,6 @@ protected:
      */
     int addBody(Body* body, const EigenTransform& worldTransform);
 
-
-
-    /**
-     * Computes camera parameters to set for watching the current scene.
-     * This is needed for writing a world file with meaningful camera parameters.
-     *
-     * Will set the camera at twice the scene's diameter (diameter of whole bounding box) distance
-     * away from the scene center along the x axis. It look at the scene along the x axis.
-     * The focal distance is also the distance from the camera to the scene center to keep things simple.
-     */
-    void getCameraParameters(Eigen::Vector3d & camPos, Eigen::Quaterniond& camQuat, double & fd) const;
-
-
     /**
      * Schedules a new "Idle Event" which will be called in the next iteration of the scene manager thread.
      *
@@ -755,9 +757,9 @@ private:
 
 protected:
     // internally needed object for the inventor stuff.
-    IVmgrBase * ivMgr;
+    GraspitCore * core;
 
-    //! Points to the main graspitWorld which is maintained by ivMgr.
+    //! Points to the main graspitWorld which is maintained by core.
     // This is just a convenience pointer.
     World * graspitWorld;
     mutable RECURSIVE_MUTEX graspitWorldMtx;
