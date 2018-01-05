@@ -35,7 +35,6 @@
 #include <urdf2graspit/Urdf2GraspItBase.h>
 
 #include <urdf2graspit/DHParam.h>
-#include <urdf2graspit/MarkerSelector.h>
 #include <urdf2graspit/ConversionResult.h>
 #include <urdf2graspit/OutputStructure.h>
 
@@ -76,9 +75,8 @@ public:
      * This can be specified with this scale factor.
      * \param _negateJointMoves negates (inverts) joint limits and velocity/effort specified in URDF
      */
-    explicit Urdf2GraspIt(UrdfTraverserPtr& traverser, float _scaleFactor = 1000, bool _negateJointMoves = false,
-            bool _addAxes=false, float _axesRadius = 0.003, float _axesLength=0.015):
-        Urdf2GraspItBase(traverser, _scaleFactor, _addAxes, _axesRadius, _axesLength),
+    explicit Urdf2GraspIt(UrdfTraverserPtr& traverser, float _scaleFactor = 1000, bool _negateJointMoves = false):
+        Urdf2GraspItBase(traverser, _scaleFactor),
         negateJointMoves(_negateJointMoves),
         isDHScaled(false),
         dhTransformed(false)
@@ -105,7 +103,7 @@ public:
      * \param fingerRootNames the roots of all fingers in the hand (the names of the joints which are the first in each finger)
      * \param material the material to use in the converted format
      * \param addVisualTransform this transform will be post-multiplied on all links' **visuals** (not links!) local
-     *      transform (their "origin"). This can be used to correct transformation errors which may have been 
+     *      transform (their "origin"). This can be used to correct transformation errors which may have been
      *      introduced in converting meshes from one format to the other, losing orientation information
      *      (for example, .dae has an "up vector" definition which may have been ignored)
      */
@@ -151,17 +149,20 @@ private:
      * This is a recursive function, so it will solve for the requested joint and then call itself on sub-branches
      * \param parentWorldTransform the parent of this joint has this world transform.
      * \param parentX the x-axis as determined by the call of this function for this joint's parent,
-     * or the root x axis for the first call
-     * \param parentZ the z-axis (rotation axis) as determined by the call of this function for this joint's parent,
-     * or the root z axis for the first call
+     * or the root/global x axis for the first call (e.g. 1,0,0)
+     * \param parentZ the z-axis (rotation axis) as determined by the call
+     * of this function for this joint's parent. If \e asRootJoint=true, the value will be ignored.
      * \param parentPos position of parent  as determined by the call of this function for this joint's parent,
      * or the origin for the first call
      * \param asRootJoint set to true for the first call of this function
+     * \param parentWorldTransformDH resulting transformation in DH space at the end of the chain.
+     *  This parameter is used in the recursion and should be the identity for root joints (\e asRootJoint = true).
      */
     bool getDHParams(std::vector<DHParam>& dhparameters, const JointConstPtr& joint,
                      const EigenTransform& parentWorldTransform,
                      const Eigen::Vector3d& parentX, const Eigen::Vector3d& parentZ,
-                     const Eigen::Vector3d parentPos, bool asRootJoint) const;
+                     const Eigen::Vector3d& parentPos, bool asRootJoint,
+                     EigenTransform& parentWorldTransformDH) const;
 
     /**
      * Returns the Denavit-Hartenberg parameters starting from link from_link
@@ -178,7 +179,7 @@ private:
      * Prints the DH parameters
      */
     void printParams(const std::vector<DHParam>& dh) const;
-  
+
     /**
      * Transforms all link's visuals, collisions and intertials according to the DH parameters.
      * This is needed because the sequence of DH transforms is not equal to the sequence of URDF joint transforms.
@@ -190,7 +191,7 @@ private:
      * Hence, we have to find for each joint the transform from the joint reference frame to the DH reference frame, and transform
      * the visuals/collisions/intertials by it.
      */
-    bool linksToDHReferenceFrames(std::vector<DHParam>& dh);
+    bool linksToDHReferenceFrames(const std::vector<DHParam>& dh);
 
 
     /**
