@@ -40,7 +40,6 @@
 #define RAD_TO_DEG 180/M_PI
 
 using urdf2graspit::Urdf2GraspIt;
-using urdf2graspit::markerselector::MarkerSelector;
 using urdf2graspit::xmlfuncs::FingerChain;
 
 bool Urdf2GraspIt::getXML(const std::vector<DHParam>& dhparams,
@@ -180,7 +179,8 @@ void Urdf2GraspIt::toGlobalCoordinates(const EigenTransform& transform,
 
 void Urdf2GraspIt::getGlobalCoordinates(const JointConstPtr& joint,
                                         const EigenTransform& parentWorldTransform,
-                                        Eigen::Vector3d& rotationAxis, Eigen::Vector3d& position) const
+                                        Eigen::Vector3d& rotationAxis,
+                                        Eigen::Vector3d& position) const
 {
     Eigen::Vector3d rotAxis = urdf_traverser::getRotationAxis(joint);
     // ROS_INFO_STREAM("Orig rotation axis of joint "<<joint->name<<": "<<rotAxis);
@@ -189,15 +189,18 @@ void Urdf2GraspIt::getGlobalCoordinates(const JointConstPtr& joint,
     // ROS_INFO_STREAM("Joint transform: "<<jointTransform);
     // ROS_INFO_STREAM("Joint world transform: "<<jointWorldTransform);
 
-    /** OLD code which was actually wrong (I think?) 
+#if 0
+    // OLD code which was actually wrong (I think?) 
     EigenTransform wtInv = jointWorldTransform.inverse();
     // ROS_INFO_STREAM("Inverse joint world transform: "<<wtInv);
     // ROS_INFO_STREAM("Rot axis: "<<rotAxis);
     rotationAxis = wtInv.rotation() * rotAxis;
-    */
-
+    
+#else
     // transform the rotation axis in world coordinate frame
     rotationAxis = jointWorldTransform.rotation() * rotAxis;
+#endif
+
     // ROS_INFO_STREAM("Transformed rotation axis of joint "<<joint->name<<": "<<rotationAxis);
     // rotationAxis.normalize();
     if ((rotationAxis.norm()-1.0) > 1e-03)
@@ -208,12 +211,17 @@ void Urdf2GraspIt::getGlobalCoordinates(const JointConstPtr& joint,
     position = jointWorldTransform.translation();
 }
 
-bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters, const JointConstPtr& joint,
+bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters,
+                               const JointConstPtr& joint,
                                const EigenTransform& parentWorldTransform,
-                               const Eigen::Vector3d& parentX, const Eigen::Vector3d& parentZ,
-                               const Eigen::Vector3d parentPos, bool asRootJoint) const
+                               const Eigen::Vector3d& parentX,
+                               const Eigen::Vector3d& parentZ,
+                               const Eigen::Vector3d& parentPos,
+                               bool asRootJoint,
+                               EigenTransform& parentWorldTransformDH) const
 {
-    ROS_INFO_STREAM("======== Transforming joint " << joint->name << " to DH parameters");
+    ROS_INFO_STREAM("======== Transforming joint " << joint->name << " to DH parameters.");
+    // ROS_INFO_STREAM("       Parent axes: " << parentX << ", "<<parentZ<<", position "<<parentPos);
 
     UrdfTraverserConstPtr trav = readTraverser();
     if (!trav)
@@ -229,32 +237,42 @@ bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters, const JointCo
         return false;
     }
 
+//    ROS_INFO_STREAM("Transform is for link "<<childLink->name);
+/*    LinkConstPtr parentLink = trav->readLink(joint->parent_link_name);
+    ROS_INFO_STREAM("Parent is "<<parentLink->name); */
+
     Eigen::Vector3d z, pos, x;
 
-    EigenTransform jointWorldTransform;
+    EigenTransform jointWorldTransform = EigenTransform::Identity();
+    EigenTransform jointWorldTransformDH = EigenTransform::Identity();
 
     if (asRootJoint)
     {
         // if this is the root joint, we won't consider the joint's
         // previous transforms, as we'll set this one to be the origin
         jointWorldTransform.setIdentity();
+        parentWorldTransformDH.setIdentity();
 
         z = urdf_traverser::getRotationAxis(joint);   // rotation axis is already in world coorinates
         // ROS_INFO_STREAM("Rotation axis of joint "<<joint->name<<": "<<z);
         pos = Eigen::Vector3d(0, 0, 0);
         x = parentX;
+        // ROS_INFO_STREAM("Axes for root joint "<<joint->name<<": z="<<z<<", x="<<x<<", pos="<<pos);
+        // ROS_INFO_STREAM("Joint world transform: "<<parentWorldTransform * urdf_traverser::getTransform(joint));
     }
     else
     {
         EigenTransform jointTransform = urdf_traverser::getTransform(joint);
         jointWorldTransform = parentWorldTransform * jointTransform;
-        //ROS_INFO_STREAM("Parent world transform: "<<parentWorldTransform);
-        //ROS_INFO_STREAM("Joint transform: "<<jointTransform);
-        //ROS_INFO_STREAM("Joint world transform: "<<jointWorldTransform);
+        // ROS_INFO_STREAM("Parent world transform: "<<parentWorldTransform);
+        // ROS_INFO_STREAM("Joint transform: "<<jointTransform);
+        // ROS_INFO_STREAM("Joint world transform: "<<jointWorldTransform);
 
+        // the global rotation axis of the joint is going to be the
+        // new global z-axis of the DH joint transform.
+        // the position is the global position of the joint.
         getGlobalCoordinates(joint, parentWorldTransform, z, pos);
-        // ROS_INFO_STREAM("Rotation axis of joint "<<joint->name<<": "<<z);
-        //ROS_INFO_STREAM("GLOBAL: "<<z<<", pos = "<<pos);
+        // ROS_INFO_STREAM("Global rotation axis of joint "<<joint->name<<": "<<z<<", pos "<<pos);
 
         DHParam param;
         if (!DHParam::toDenavitHartenberg(param, parentZ, parentX, parentPos, z, pos, x))
@@ -262,6 +280,29 @@ bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters, const JointCo
             ROS_ERROR("could not obtain dh params");
             return false;
         }
+
+        // The global pose of the DH joint may be different to the global pose 
+        // of the URDF joint. Calculate the pose of the DH joint in world coordinates
+        // and apply it to \e pos, so that the recursion can take this into account.
+        // ROS_INFO_STREAM("Translating  "<<parentPos<<" ( target: "<<pos<<" ) using transform = "<<parentWorldTransformDH);
+
+        EigenTransform jointTransformDH = EigenTransform::Identity();
+        Eigen::Vector3d z(0,0,1);
+        jointTransformDH.translate(z*param.d);
+        jointTransformDH.rotate(Eigen::AngleAxisd(param.theta,z));
+        Eigen::Vector3d x(1,0,0); 
+        jointTransformDH.translate(x*param.r);
+        jointTransformDH.rotate(Eigen::AngleAxisd(param.alpha,x));
+
+        jointWorldTransformDH = parentWorldTransformDH * jointTransformDH;
+
+        /*ROS_INFO_STREAM("parentWorldTransformDH: "<<jointTransformDH);
+        ROS_INFO_STREAM("joint transform DH: "<<jointTransformDH);
+        ROS_INFO_STREAM("joint world transform DH: "<<jointWorldTransformDH);*/
+
+        Eigen::Vector3d pi_new = jointWorldTransformDH.translation();
+        // ROS_INFO_STREAM("Transformed DH pose: "<<pi_new<<" ( vs URDF space "<<pos<<" )");
+        pos = pi_new;
 
         param.dof_index = dhparameters.size();
         param.joint = trav->readParentJoint(joint);
@@ -280,7 +321,7 @@ bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters, const JointCo
         }
         param.childLink = paramChildLink;
         dhparameters.push_back(param);
-        //ROS_INFO_STREAM("DH for Joint "<<param.joint->name<<" parent axes: z="<<z<<", x="<<x<<", pos="<<pos<<": "<<param);
+        // ROS_INFO_STREAM("DH for Joint "<<param.joint->name<<" parent axes: z="<<z<<", x="<<x<<", pos="<<pos<<": "<<param);
     }
         
 
@@ -302,7 +343,7 @@ bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters, const JointCo
         param.alpha = 0;
 
         dhparameters.push_back(param);
-        //ROS_INFO_STREAM("DH for Joint "<<param.joint->name<<", parent axes: z="<<z<<", x="<<x<<", pos="<<pos<<": "<<param);
+        // ROS_INFO_STREAM("DH for Joint "<<param.joint->name<<", parent axes: z="<<z<<", x="<<x<<", pos="<<pos<<": "<<param);
         return true;
     }
     
@@ -311,7 +352,8 @@ bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters, const JointCo
     for (std::vector<JointPtr>::const_iterator pj = childLink->child_joints.begin();
             pj != childLink->child_joints.end(); pj++)
     {
-        if (!getDHParams(dhparameters, *pj, jointWorldTransform, x, z, pos, false)) return false;
+        if (!getDHParams(dhparameters, *pj, jointWorldTransform, x, z,
+                         pos, false, jointWorldTransformDH)) return false;
     }
 
     return true;
@@ -326,8 +368,7 @@ bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters, const LinkCon
         ROS_ERROR("Need to call prepareModelForDenavitHartenberg() before DH parameters can be calculated");
         return false;
     }
-    EigenTransform root_transform;
-    root_transform.setIdentity();
+    EigenTransform root_transform = EigenTransform::Identity();
     Eigen::Vector3d x(1, 0, 0);
     Eigen::Vector3d z(0, 0, 1);
     Eigen::Vector3d pos(0, 0, 0);
@@ -335,7 +376,8 @@ bool Urdf2GraspIt::getDHParams(std::vector<DHParam>& dhparameters, const LinkCon
     for (std::vector<JointPtr>::const_iterator pj = from_link->child_joints.begin();
             pj != from_link->child_joints.end(); pj++)
     {
-        if (!getDHParams(dhparameters, *pj, root_transform, x, z, pos, true)) return false;
+      EigenTransform fullDHTrans = EigenTransform::Identity();
+      if (!getDHParams(dhparameters, *pj, root_transform, x, z, pos, true, fullDHTrans)) return false;
     }
 
     return true;
@@ -439,8 +481,7 @@ bool Urdf2GraspIt::coordsConvert(const JointPtr& joint, const JointPtr& root_joi
 }
 */
 
-
-bool Urdf2GraspIt::linksToDHReferenceFrames(std::vector<DHParam>& dh)
+bool Urdf2GraspIt::linksToDHReferenceFrames(const std::vector<DHParam>& dh)
 {
     UrdfTraverserPtr trav = getTraverser();
     if (!trav)
@@ -459,7 +500,6 @@ bool Urdf2GraspIt::linksToDHReferenceFrames(std::vector<DHParam>& dh)
     std::map<std::string,EigenTransform>::iterator it;
     for (it=transforms.begin(); it!=transforms.end(); ++it)
     {
-            
         LinkPtr link=trav->getLink(it->first);
         if (!link)
         {
@@ -469,11 +509,8 @@ bool Urdf2GraspIt::linksToDHReferenceFrames(std::vector<DHParam>& dh)
         bool preApply = true;
         urdf_traverser::applyTransform(link, it->second, preApply);
     }
-    
     return true;
 }
-
-
 
 
 void Urdf2GraspIt::scaleParams(std::vector<DHParam>& dh, double scale_factor) const
@@ -509,6 +546,8 @@ bool Urdf2GraspIt::toDenavitHartenberg(const std::string& fromLink)
     }
     dh_parameters = dhparams;
     dhTransformed = true;
+    
+    // Urdf2GraspItBase::testVisualizeURDF(fromLink);
 
     /*for (std::vector<DHParam>::iterator d=dhparams.begin(); d!=dhparams.end(); ++d) {
         ROS_INFO_STREAM("DH param: "<<*d);
@@ -521,6 +560,8 @@ bool Urdf2GraspIt::toDenavitHartenberg(const std::string& fromLink)
         ROS_ERROR("Could not adjust transforms");
         return false;
     }
+    
+    // Urdf2GraspItBase::testVisualizeURDF(fromLink);
 
     return true;
 }
@@ -604,6 +645,7 @@ Urdf2GraspIt::ConversionResultPtr Urdf2GraspIt::preConvert(const ConversionParam
     printParams(dh_parameters);
     
     ROS_INFO("##### Scaling DH parameters");
+
     // scale up all dh parameters to match the scale factor,
     // and also all link/collision/intertial transforms given in the URDF
 
@@ -612,6 +654,8 @@ Urdf2GraspIt::ConversionResultPtr Urdf2GraspIt::preConvert(const ConversionParam
         scaleParams(dh_parameters, getScaleFactor());
         isDHScaled = true;
     }
+    
+    // Urdf2GraspItBase::testVisualizeURDF(param->rootLinkName);
 
     return result;
 }
@@ -619,6 +663,8 @@ Urdf2GraspIt::ConversionResultPtr Urdf2GraspIt::preConvert(const ConversionParam
 
 Urdf2GraspIt::ConversionResultPtr Urdf2GraspIt::postConvert(const ConversionParametersPtr& cparams, ConversionResultPtr& _result)
 {
+    // Urdf2GraspItBase::testVisualizeURDF();
+
     GraspItConversionResultPtr result = baselib_binding_ns::dynamic_pointer_cast<GraspItConversionResult>(_result);
     if (!result)
     {
@@ -763,15 +809,6 @@ Urdf2GraspIt::ConversionResultPtr Urdf2GraspIt::processAll(const std::string& ur
         ROS_ERROR("Could not prepare for DH conversion");
         return failResult;
     }
-      
-/*    ROS_INFO("### Generating contacts...");
-    float coefficient = 0.2;
-    if (!generateContactsWithViewer(fingerRootNames, palmLinkName, coefficient))
-    {
-        ROS_ERROR("Could not generate contacts");
-        return failResult;
-    }
-*/
 
     UrdfTraverserPtr trav = getTraverser();
     if (!trav)
@@ -785,7 +822,11 @@ Urdf2GraspIt::ConversionResultPtr Urdf2GraspIt::processAll(const std::string& ur
             palmLinkName,
             material,
             fingerRootNames, addVisualTransform));
-    ConversionResultPtr convResult = convert(params);
+
+/*    MeshConvertRecursionParamsPtr mParams(new GraspitMeshConvertRecursionParams(getScaleFactor(), material,
+                                        OUTPUT_EXTENSION, addVisualTransform));
+*/
+    ConversionResultPtr convResult = convert(params); //, mParams);
     if (!convResult || !convResult->success)
     {
         ROS_ERROR("Could not do the conversion");
