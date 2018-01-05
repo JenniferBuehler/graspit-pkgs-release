@@ -1,3 +1,32 @@
+## graspit_tools (indigo) - 1.1.3-0
+
+The packages in the `graspit_tools` repository were released into the `indigo` distro by running `/usr/bin/bloom-release graspit_tools --track indigo --rosdistro indigo` on `Fri, 05 Jan 2018 17:21:39 -0000`
+
+These packages were released:
+- `grasp_planning_graspit`
+- `grasp_planning_graspit_msgs`
+- `grasp_planning_graspit_ros`
+- `graspit_tools`
+- `jaco_graspit_sample`
+- `urdf2graspit`
+
+Version of package(s) in repository `graspit_tools`:
+
+- upstream repository: https://github.com/JenniferBuehler/graspit-pkgs.git
+- release repository: https://github.com/JenniferBuehler/graspit-pkgs-release.git
+- rosdistro version: `1.1.2-0`
+- old version: `1.1.2-0`
+- new version: `1.1.3-0`
+
+Versions of tools used:
+
+- bloom version: `0.6.1`
+- catkin_pkg version: `0.3.9`
+- rosdep version: `0.11.8`
+- rosdistro version: `0.6.3`
+- vcstools version: `0.1.39`
+
+
 ## graspit_tools (indigo) - 1.1.2-0
 
 The packages in the `graspit_tools` repository were released into the `indigo` distro by running `/usr/bin/bloom-release graspit_tools --track indigo --rosdistro indigo` on `Sun, 07 Aug 2016 09:32:08 -0000`
