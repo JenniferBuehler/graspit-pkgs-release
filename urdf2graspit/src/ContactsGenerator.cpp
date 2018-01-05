@@ -93,7 +93,6 @@ void ContactsGenerator::applyTransformToContacts(LinkPtr& link, const EigenTrans
     }
 }
 
-
 void ContactsGenerator::scaleContacts(double scale_factor)
 {
     if (isContactsScaled) return;
@@ -229,7 +228,8 @@ bool ContactsGenerator::generateContacts(const std::vector<std::string>& rootFin
     initOutStructure(trav->getModelName());
 
     // first, do the palm:
-    MarkerSelector::MarkerMap::const_iterator palmM = markers.find(palmLinkName);
+    std::string palmLinkNameClean = MarkerSelector::Marker::toSoBaseName(palmLinkName);
+    MarkerSelector::MarkerMap::const_iterator palmM = markers.find(palmLinkNameClean);
     if (palmM != markers.end())
     {
         int linkNum = 0;
@@ -243,7 +243,8 @@ bool ContactsGenerator::generateContacts(const std::vector<std::string>& rootFin
 
     // now, do all the fingers:
     int fingerNum = -1;
-    for (std::vector<std::string>::const_iterator it = rootFingerJoints.begin(); it != rootFingerJoints.end(); ++it)
+    for (std::vector<std::string>::const_iterator it = rootFingerJoints.begin();
+         it != rootFingerJoints.end(); ++it)
     {
         ++fingerNum;
         // ROS_INFO("Handling root finger %s",it->c_str());
@@ -257,7 +258,8 @@ bool ContactsGenerator::generateContacts(const std::vector<std::string>& rootFin
         }
         std::vector<JointPtr> chain;
         bool onlyActive = true;
-        if (!urdf_traverser::getDependencyOrderedJoints(*trav, chain, root_joint, false, onlyActive) || chain.empty())
+        if (!urdf_traverser::getDependencyOrderedJoints(*trav, chain, root_joint, false,
+                                                        onlyActive) || chain.empty())
         {
             ROS_ERROR("Could not get joint chain, joint %s", root_joint->name.c_str());
             return false;
@@ -270,14 +272,14 @@ bool ContactsGenerator::generateContacts(const std::vector<std::string>& rootFin
             JointPtr chainJoint = *cit;
             std::string linkName = chainJoint->child_link_name;
 
-            MarkerSelector::MarkerMap::const_iterator markerIt = markers.find(linkName);
+            std::string linkNameClean = MarkerSelector::Marker::toSoBaseName(linkName);
+            MarkerSelector::MarkerMap::const_iterator markerIt = markers.find(linkNameClean);
             if (markerIt == markers.end())
             {
                 // no markers defined for this link
                 // ROS_INFO("No markers defined for this link: %s",linkName.c_str());
                 continue;
             }
-
 
             // ROS_INFO("Marker defined for link %s",linkName.c_str());
 
@@ -303,13 +305,14 @@ std::string ContactsGenerator::getContactsFileContent(const std::string& robotNa
 {
     std::stringstream str;
 
-    // Robot name
-    str << robotName << std::endl;
+    str << "<?xml version=\"1.0\" ?> " << std::endl; 
+    str << "<virtual_contacts>" << std::endl;
+    str << "<robot_name>";
+    str << robotName;
+    str << "</robot_name>" << std::endl;
 
     // Number of contacts
     int contSize = contacts.size();
-    str << contSize << std::endl;
-
     //ROS_INFO_STREAM("Number of contacts: "<<contSize);
 
     for (std::vector<ContactPtr>::const_iterator cit = contacts.begin(); cit != contacts.end(); ++cit)
@@ -317,45 +320,70 @@ std::string ContactsGenerator::getContactsFileContent(const std::string& robotNa
         ContactPtr c = *cit;
 
         //ROS_INFO_STREAM("Contact: "<<*c);
+        str << "<virtual_contact>" << std::endl;
+        str << "<finger_number>";
+        str << c->fingerNum;
+        str << "</finger_number>" << std::endl;
 
-        str << c->fingerNum << " " << c->linkNum << std::endl;
-        str << c->numFrictionEdges << std::endl;
+        str << "<link_number>";
+        str << c->linkNum;
+        str << "</link_number>" << std::endl;
+
+        str << "<num_friction_edges>";
+        str << c->numFrictionEdges;
+        str << "</num_friction_edges>" << std::endl;
+
+        str << "<friction_edges>" << std::endl;
 
         // The friction edges. One line for each friction edge (total number defined in 2) ).
         //  6 * <number-friction-edges> values.
         for (unsigned int i = 0; i < c->numFrictionEdges; ++i)
         {
+            str << "<friction_edge>";
             for (unsigned int j = 0; j < 6; ++j)
             {
                 str << c->frictionEdges[i * 6 + j] << " ";
             }
-            str << std::endl;
+            str << "</friction_edge>" << std::endl;
         }
+        
+        str << "</friction_edges>" << std::endl;
 
+        str << "<location>" << std::endl;
         str << static_cast<float>(c->loc.x()) << " "
             << static_cast<float>(c->loc.y()) << " "
-            << static_cast<float>(c->loc.z()) << std::endl;
+            << static_cast<float>(c->loc.z());
+        str << "</location>" << std::endl;
 
+        str << "<rotation>" << std::endl;
         str << static_cast<float>(c->ori.w()) << " "
             << static_cast<float>(c->ori.x()) << " "
             << static_cast<float>(c->ori.y()) << " "
-            << static_cast<float>(c->ori.z()) << std::endl;
+            << static_cast<float>(c->ori.z());
+        str << "</rotation>" << std::endl;
 
         // Frame location (mostly()) equals virtual contact location)
+        str << "<translation>";
         str << static_cast<float>(c->loc.x()) << " "
             << static_cast<float>(c->loc.y()) << " "
-            << static_cast<float>(c->loc.z()) << std::endl;
+            << static_cast<float>(c->loc.z());
+        str << "</translation>" << std::endl;
 
+        str << "<normal>";
         str << static_cast<float>(c->norm.x()) << " "
             << static_cast<float>(c->norm.y()) << " "
-            << static_cast<float>(c->norm.z()) << std::endl;
+            << static_cast<float>(c->norm.z());
+        str << "</normal>" << std::endl;
 
-        str << static_cast<float>(c->cof) << std::endl;
+        str << "<sCof>";
+        str << static_cast<float>(c->cof);
+        str << "</sCof>" << std::endl;;
+        str << "</virtual_contact>" << std::endl;
     }
+    str << "</virtual_contacts>" << std::endl;
 
     return str.str();
 }
-
 
 
 SoNode * ContactsGenerator::getAxesAsInventor(
@@ -406,7 +434,7 @@ SoNode * ContactsGenerator::getAxesAsInventor(
         return NULL;
     }
 
-
+    // recurse to children
     for (std::vector<JointPtr>::const_iterator pj = from_link->child_joints.begin();
             pj != from_link->child_joints.end(); pj++)
     {
@@ -469,7 +497,7 @@ bool ContactsGenerator::generateContactsWithViewer(const std::vector<std::string
         return false;
     }
     
-    SoNode * node = getAsInventor(palmLinkName,false, 
+    SoNode * node = getAsInventor(palmLinkName, false, 
         _displayAxes && !_axesFromDH, _axesRadius, _axesLength, addVisualTransform, NULL);
 
     Eigen::Vector3d minBB, maxBB;
@@ -513,8 +541,8 @@ bool ContactsGenerator::generateContactsWithViewer(const std::vector<std::string
     markerSelector.runViewer();
 
     MarkerSelector::MarkerMap markers = markerSelector.getMarkers();
-    // ROS_INFO("Number of contacts: %lu",markers.size());
-    // ROS_INFO("Markers: %s",markerSelector.toString().c_str());
+    ROS_INFO("Number of contacts: %lu",markers.size());
+    ROS_INFO("Markers: %s",markerSelector.toString().c_str());
 
     // if there was a visual transform (addVisualTransform) we also need
     // to correct the normals which are now in visual coordinate space
