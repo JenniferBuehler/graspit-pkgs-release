@@ -19,7 +19,7 @@
 */
 
 #include <grasp_planning_graspit/GraspItHelpers.h>
-#include <matvec3D.h>
+#include <graspit/matvec3D.h>
 
 transf GraspIt::getGraspitTransform(const GraspIt::EigenTransform& transform)
 {
@@ -43,7 +43,7 @@ GraspIt::EigenTransform GraspIt::getEigenTransform(const transf& trans)
     vec3 t = trans.translation();
 
     Eigen::Vector3d translation(t.x(), t.y(), t.z());
-    Eigen::Quaterniond quaternion(q.w, q.x, q.y, q.z);
+    Eigen::Quaterniond quaternion(q.w(), q.x(), q.y(), q.z());
 
     transform = transform.translate(translation);
     transform = transform.rotate(quaternion);
