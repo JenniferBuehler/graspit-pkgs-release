@@ -1,3 +1,5 @@
-# grasp_planning_graspit
+# graspit-pkgs
 
-Please refer to the [wiki](https://github.com/JenniferBuehler/graspit-pkgs/wiki/GraspIt-CPP-API) for more information.
+Collection of packages related to GraspIt!
+
+Please also see [the wiki page](https://github.com/JenniferBuehler/graspit-pkgs/wiki) for more details.
