@@ -2,6 +2,9 @@
 Changelog for package grasp_planning_graspit_ros
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+1.2.0 (2018-01-06)
+------------------
+
 1.1.3 (2018-01-05)
 ------------------
 * Adaptation for graspit upstream merge
